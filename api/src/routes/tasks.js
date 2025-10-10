@@ -119,19 +119,22 @@ router.post('/', authenticate, authorize(['admin', 'superadmin']), async (req, r
     
     console.log('[TASKS] Task created successfully:', populatedTask._id);
     
-    // Notify assigned executive via email (fire-and-forget)
+    // Notify assigned executive via email (await to ensure immediate send)
     try {
       const exec = await User.findById(assignedTo).select('name email');
       if (exec?.email) {
         const subject = `[Task Assigned] ${title}`;
+        const appUrl = process.env.DASHBOARD_URL || 'https://era-kpi.vercel.app';
         const message = `Hello ${exec.name},\n\n` +
           `You have been assigned a new task:\n` +
           `Title: ${title}\n` +
           `Priority: ${priority}\n` +
           `Deadline: ${new Date(deadline).toLocaleString()}\n\n` +
           `Description:\n${description}\n\n` +
-          `Please log in to view details and start working on it.` + (reportLink ? `\n\nReport Link: ${reportLink}` : '');
-        sendAdminAddedEmail({ toEmail: exec.email, toName: exec.name, subject, message }).catch(() => {});
+          `Please log in to view details and start working on it.\n` +
+          `${appUrl}/executive/tasks` +
+          (reportLink ? `\n\nReport Link: ${reportLink}` : '');
+        await sendAdminAddedEmail({ toEmail: exec.email, toName: exec.name, subject, message }).catch(() => {});
       }
     } catch (emailErr) {
       // Do not fail the response due to email issues

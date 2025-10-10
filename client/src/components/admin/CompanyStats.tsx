@@ -38,7 +38,10 @@ const CompanyStats: React.FC = () => {
   const fetchStats = async () => {
     try {
       if (user?.company) {
-        const response = await kpiApi.getCompanyStats(user.company);
+        const companyId = typeof (user as any).company === 'object'
+          ? ((user as any).company._id || (user as any).company.id)
+          : String((user as any).company);
+        const response = await kpiApi.getCompanyStats(companyId);
         setStats(response.data);
       }
     } catch (error) {
