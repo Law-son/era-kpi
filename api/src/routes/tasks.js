@@ -59,10 +59,20 @@ router.get('/', authenticate, async (req, res) => {
     
     console.log('[TASKS] Found tasks:', tasks.length);
     tasks.forEach(task => {
-      console.log(`[TASKS] Task ${task._id}: status=${task.status}, hasScoring=${!!task.scoring}, company=${task.company?._id}, assignedBy=${task.assignedBy?._id}`);
+      console.log(`[TASKS] Task ${task._id}: status=${task.status}, hasScoring=${!!task.scoring}, company=${task.company?._id}, assignedBy=${task.assignedBy?._id}, assignedTo=${task.assignedTo?._id}`);
     });
     
-    res.json(tasks);
+    // Filter out tasks with invalid assignedTo references
+    const validTasks = tasks.filter(task => {
+      if (!task.assignedTo) {
+        console.warn(`[TASKS] Task ${task._id} has invalid assignedTo reference, skipping`);
+        return false;
+      }
+      return true;
+    });
+    
+    console.log(`[TASKS] Returning ${validTasks.length} valid tasks out of ${tasks.length} total`);
+    res.json(validTasks);
   } catch (error) {
     console.error('[TASKS] Error:', error);
     res.status(500).json({ message: error.message });
@@ -98,6 +108,17 @@ router.post('/', authenticate, authorize(['admin', 'superadmin']), async (req, r
       assignedBy: req.user._id,
       userRole: req.user.role 
     });
+    
+    // Validate that assignedTo user exists
+    if (assignedTo) {
+      const assignedUser = await User.findById(assignedTo);
+      if (!assignedUser) {
+        return res.status(400).json({ message: 'Assigned user not found' });
+      }
+      if (assignedUser.role !== 'executive') {
+        return res.status(400).json({ message: 'Can only assign tasks to executives' });
+      }
+    }
     
     const task = new Task({
       title,

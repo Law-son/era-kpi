@@ -8,7 +8,7 @@ interface Task {
   _id: string;
   title: string;
   description: string;
-  assignedTo: {
+  assignedTo?: {
     _id: string;
     name: string;
     email: string;
@@ -126,7 +126,7 @@ const TaskManagement: React.FC = () => {
     setFormData({
       title: task.title,
       description: task.description,
-      assignedTo: task.assignedTo._id,
+      assignedTo: task.assignedTo?._id || '',
       deadline: new Date(task.deadline).toISOString().split('T')[0],
       priority: task.priority,
       reportLink: task.reportLink || '',
@@ -387,7 +387,7 @@ const TaskManagement: React.FC = () => {
                 <div className="flex items-center space-x-4 text-sm text-gray-500">
                   <div className="flex items-center space-x-1">
                     <User className="h-4 w-4" />
-                    <span>{task.assignedTo.name}</span>
+                    <span>{task.assignedTo?.name || 'Unknown User'}</span>
                   </div>
                   <div className="flex items-center space-x-1">
                     <Clock className="h-4 w-4" />
@@ -444,7 +444,7 @@ const TaskManagement: React.FC = () => {
                     </div>
                     <div className="mb-4 p-3 bg-white rounded-lg border border-orange-200">
                       <p className="text-sm text-gray-700">
-                        <strong>Task submitted by {task.assignedTo.name}</strong> - Please review the submission and provide scores based on the established criteria.
+                        <strong>Task submitted by {task.assignedTo?.name || 'Unknown User'}</strong> - Please review the submission and provide scores based on the established criteria.
                       </p>
                     </div>
                     
