@@ -109,15 +109,17 @@ router.post('/', authenticate, authorize(['admin', 'superadmin']), async (req, r
       userRole: req.user.role 
     });
     
-    // Validate that assignedTo user exists
-    if (assignedTo) {
-      const assignedUser = await User.findById(assignedTo);
-      if (!assignedUser) {
-        return res.status(400).json({ message: 'Assigned user not found' });
-      }
-      if (assignedUser.role !== 'executive') {
-        return res.status(400).json({ message: 'Can only assign tasks to executives' });
-      }
+    // Validate that assignedTo user exists and is mandatory
+    if (!assignedTo) {
+      return res.status(400).json({ message: 'Assigned user is required' });
+    }
+    
+    const assignedUser = await User.findById(assignedTo);
+    if (!assignedUser) {
+      return res.status(400).json({ message: 'Assigned user not found' });
+    }
+    if (assignedUser.role !== 'executive') {
+      return res.status(400).json({ message: 'Can only assign tasks to executives' });
     }
     
     const task = new Task({
@@ -177,6 +179,17 @@ router.put('/:id', authenticate, async (req, res) => {
     const original = await Task.findById(req.params.id);
     if (!original) {
       return res.status(404).json({ message: 'Task not found' });
+    }
+
+    // Validate assignedTo if provided
+    if (assignedTo) {
+      const assignedUser = await User.findById(assignedTo);
+      if (!assignedUser) {
+        return res.status(400).json({ message: 'Assigned user not found' });
+      }
+      if (assignedUser.role !== 'executive') {
+        return res.status(400).json({ message: 'Can only assign tasks to executives' });
+      }
     }
 
     const updated = await Task.findByIdAndUpdate(

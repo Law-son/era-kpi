@@ -112,12 +112,33 @@ router.put('/:id', authenticate, async (req, res) => {
 // Delete user (admin only)
 router.delete('/:id', authenticate, authorize(['admin', 'superadmin']), async (req, res) => {
   try {
-    const user = await User.findByIdAndDelete(req.params.id);
+    const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    res.json({ message: 'User deleted successfully' });
+
+    // If deleting an executive, delete all their assigned tasks
+    if (user.role === 'executive') {
+      const Task = (await import('../models/Task.js')).default;
+      const assignedTasks = await Task.find({ assignedTo: user._id });
+      
+      if (assignedTasks.length > 0) {
+        console.log(`[USERS] Deleting ${assignedTasks.length} tasks assigned to executive ${user.name}`);
+        await Task.deleteMany({ assignedTo: user._id });
+        console.log(`[USERS] Successfully deleted ${assignedTasks.length} tasks`);
+      }
+    }
+
+    // Delete the user
+    await User.findByIdAndDelete(req.params.id);
+    
+    const message = user.role === 'executive' 
+      ? `User and ${assignedTasks?.length || 0} assigned tasks deleted successfully`
+      : 'User deleted successfully';
+    
+    res.json({ message });
   } catch (error) {
+    console.error('[USERS] Delete user error:', error);
     res.status(500).json({ message: error.message });
   }
 });

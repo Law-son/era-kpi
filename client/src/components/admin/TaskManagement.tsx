@@ -8,7 +8,7 @@ interface Task {
   _id: string;
   title: string;
   description: string;
-  assignedTo?: {
+  assignedTo: {
     _id: string;
     name: string;
     email: string;
@@ -97,6 +97,10 @@ const TaskManagement: React.FC = () => {
         toast.error('Report link is required');
         return;
       }
+      if (!formData.assignedTo) {
+        toast.error('Please select an executive to assign this task to');
+        return;
+      }
       const taskData = {
         ...formData,
         company: user?.company,
@@ -126,7 +130,7 @@ const TaskManagement: React.FC = () => {
     setFormData({
       title: task.title,
       description: task.description,
-      assignedTo: task.assignedTo?._id || '',
+      assignedTo: task.assignedTo._id,
       deadline: new Date(task.deadline).toISOString().split('T')[0],
       priority: task.priority,
       reportLink: task.reportLink || '',
@@ -224,10 +228,15 @@ const TaskManagement: React.FC = () => {
         </div>
         <button
           onClick={() => setShowForm(true)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+          disabled={executives.length === 0}
+          className={`px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 ${
+            executives.length === 0 
+              ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
         >
           <Plus className="h-4 w-4" />
-          <span>Create Task</span>
+          <span>{executives.length === 0 ? 'No Executives Available' : 'Create Task'}</span>
         </button>
       </div>
 
@@ -294,6 +303,7 @@ const TaskManagement: React.FC = () => {
                   onChange={(e) => setFormData({ ...formData, assignedTo: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   required
+                  disabled={executives.length === 0}
                 >
                   <option value="">Select Executive</option>
                   {executives.length === 0 ? (
@@ -307,9 +317,15 @@ const TaskManagement: React.FC = () => {
                   )}
                 </select>
                 {executives.length === 0 && (
-                  <p className="text-sm text-red-600 mt-1">
-                    No executives found. Make sure executives are added to your company.
-                  </p>
+                  <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-md">
+                    <p className="text-sm text-red-600 font-medium">
+                      ⚠️ No executives found in your company
+                    </p>
+                    <p className="text-sm text-red-500 mt-1">
+                      You need to add executives to your company before creating tasks. 
+                      Go to the Executives tab to add them first.
+                    </p>
+                  </div>
                 )}
               </div>
 
@@ -387,7 +403,7 @@ const TaskManagement: React.FC = () => {
                 <div className="flex items-center space-x-4 text-sm text-gray-500">
                   <div className="flex items-center space-x-1">
                     <User className="h-4 w-4" />
-                    <span>{task.assignedTo?.name || 'Unknown User'}</span>
+                    <span>{task.assignedTo.name}</span>
                   </div>
                   <div className="flex items-center space-x-1">
                     <Clock className="h-4 w-4" />
@@ -444,7 +460,7 @@ const TaskManagement: React.FC = () => {
                     </div>
                     <div className="mb-4 p-3 bg-white rounded-lg border border-orange-200">
                       <p className="text-sm text-gray-700">
-                        <strong>Task submitted by {task.assignedTo?.name || 'Unknown User'}</strong> - Please review the submission and provide scores based on the established criteria.
+                        <strong>Task submitted by {task.assignedTo.name}</strong> - Please review the submission and provide scores based on the established criteria.
                       </p>
                     </div>
                     
