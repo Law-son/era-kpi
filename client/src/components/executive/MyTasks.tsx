@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckSquare, Clock, FileText, Send, Calendar, Link as LinkIcon } from 'lucide-react';
+import { CheckSquare, Clock, FileText, Send, Calendar, Link as LinkIcon, Pencil } from 'lucide-react';
 import { tasksApi } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
@@ -31,6 +31,7 @@ const MyTasks: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [submissionContent, setSubmissionContent] = useState('');
   const [submittingTaskId, setSubmittingTaskId] = useState<string | null>(null);
+  const [editingSubmissionTaskId, setEditingSubmissionTaskId] = useState<string | null>(null);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -60,9 +61,10 @@ const MyTasks: React.FC = () => {
 
     try {
       await tasksApi.submit(taskId, { content: submissionContent });
-      toast.success('Task submitted successfully');
+      toast.success('Submission saved');
       setSubmissionContent('');
       setSubmittingTaskId(null);
+      setEditingSubmissionTaskId(null);
       fetchTasks();
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to submit task');
@@ -211,6 +213,44 @@ const MyTasks: React.FC = () => {
                     <p className="text-xs text-gray-500 mt-1">
                       Submitted: {new Date(task.submission.submittedAt).toLocaleString()}
                     </p>
+                    {task.status !== 'completed' && (
+                      <div className="mt-3">
+                        {editingSubmissionTaskId === task._id ? (
+                          <div className="space-y-3">
+                            <textarea
+                              value={submissionContent}
+                              onChange={(e) => setSubmissionContent(e.target.value)}
+                              placeholder="Update your submission..."
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              rows={4}
+                            />
+                            <div className="flex space-x-2">
+                              <button
+                                onClick={() => handleSubmitTask(task._id)}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+                              >
+                                <Send className="h-4 w-4" />
+                                <span>Save Changes</span>
+                              </button>
+                              <button
+                                onClick={() => { setEditingSubmissionTaskId(null); setSubmissionContent(''); }}
+                                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => { setEditingSubmissionTaskId(task._id); setSubmissionContent(task.submission?.content || ''); }}
+                            className="mt-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+                          >
+                            <Pencil className="h-4 w-4" />
+                            <span>Edit Submission</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   ['pending', 'in-progress'].includes(task.status) && (

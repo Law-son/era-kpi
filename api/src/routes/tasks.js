@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import User from '../models/User.js';
 import { sendAdminAddedEmail } from '../services/emailService.js';
 import { authenticate, authorize } from '../middleware/auth.js';
+import { updateLeaderboardsOnTaskScored } from '../services/leaderboardService.js';
 
 const router = express.Router();
 
@@ -251,6 +252,7 @@ router.put('/:id/submit', authenticate, authorize(['executive']), async (req, re
       return res.status(403).json({ message: 'Not authorized to submit this task' });
     }
 
+    const isEdit = !!task.submission;
     task.submission = {
       content: content || '',
       submittedAt: new Date(),
@@ -266,22 +268,22 @@ router.put('/:id/submit', authenticate, authorize(['executive']), async (req, re
       .populate('company', 'name')
       .populate('comments.author', 'name role');
 
-    // Notify the admin who assigned the task about completion (fire-and-forget)
+    // Notify the admin who assigned the task about completion or edit (fire-and-forget)
     try {
       const assignedByAdmin = await User.findById(task.assignedBy).select('name email role');
       
       if (assignedByAdmin && assignedByAdmin.role === 'admin' && assignedByAdmin.email) {
         const executive = populated.assignedTo;
         const company = populated.company;
-        const subject = `[Task Submitted] ${task.title}`;
+        const subject = `${isEdit ? '[Task Edited]' : '[Task Submitted]'} ${task.title}`;
         const message = `Hello ${assignedByAdmin.name},\n\n` +
-          `Executive ${executive.name} has submitted the task you assigned for review:\n\n` +
+          `Executive ${executive.name} has ${isEdit ? 'edited the submission for' : 'submitted'} the task you assigned:\n\n` +
           `Task: ${task.title}\n` +
           `Company: ${company.name}\n` +
           `Executive: ${executive.name}\n` +
           `Priority: ${task.priority}\n` +
           `Deadline: ${new Date(task.deadline).toLocaleString()}\n` +
-          `Submitted: ${new Date(task.submission.submittedAt).toLocaleString()}\n\n` +
+          `${isEdit ? 'Edited' : 'Submitted'}: ${new Date(task.submission.submittedAt).toLocaleString()}\n\n` +
           `Submission Content:\n${task.submission.content}\n\n` +
           `Please log in to review and score this task.`;
         
@@ -292,7 +294,7 @@ router.put('/:id/submit', authenticate, authorize(['executive']), async (req, re
           message 
         }).catch(err => console.error(`Failed to send notification to assigned admin ${assignedByAdmin.email}:`, err));
         
-        console.log(`Sent task completion notification to assigned admin ${assignedByAdmin.name} for task: ${task.title}`);
+        console.log(`Sent task ${isEdit ? 'edit' : 'submission'} notification to assigned admin ${assignedByAdmin.name} for task: ${task.title}`);
       } else {
         console.log(`No valid assigned admin found for task: ${task.title} (assignedBy: ${task.assignedBy})`);
       }
@@ -302,6 +304,57 @@ router.put('/:id/submit', authenticate, authorize(['executive']), async (req, re
     }
 
     res.json(populated);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Admin requests an edit from executive
+router.post('/:id/request-edit', authenticate, authorize(['admin', 'superadmin']), async (req, res) => {
+  try {
+    const { message: requestMessage } = req.body || {};
+    const task = await Task.findById(req.params.id).populate('assignedTo', 'name email').populate('company', 'name');
+    if (!task) return res.status(404).json({ message: 'Task not found' });
+
+    // Only allow request edit for non-completed tasks
+    if (task.status === 'completed') {
+      return res.status(400).json({ message: 'Cannot request edit for a completed task' });
+    }
+
+    // Notify executive via email
+    try {
+      const executive = task.assignedTo;
+      if (executive?.email) {
+        const subject = `[Edit Requested] ${task.title}`;
+        const message = `Hello ${executive.name},\n\n` +
+          `${req.user.name} has requested edits to your task submission${task.submission ? '' : ' (when you submit)'}:\n\n` +
+          `Task: ${task.title}\n` +
+          `Company: ${task.company?.name || ''}\n` +
+          `Priority: ${task.priority}\n` +
+          `Deadline: ${new Date(task.deadline).toLocaleString()}\n\n` +
+          `${requestMessage ? `Request notes:\n${String(requestMessage)}\n\n` : ''}` +
+          `Please log in to make the necessary updates.`;
+        await sendAdminAddedEmail({ toEmail: executive.email, toName: executive.name, subject, message }).catch(() => {});
+      }
+    } catch (emailErr) {
+      console.error('Failed to send edit request email:', emailErr);
+    }
+
+    // Optionally record a comment on the task for audit trail
+    try {
+      task.comments = task.comments || [];
+      task.comments.push({
+        author: req.user.id,
+        role: req.user.role,
+        text: `Edit requested${requestMessage ? `: ${String(requestMessage)}` : ''}`,
+        createdAt: new Date(),
+      });
+      await task.save();
+    } catch (saveErr) {
+      console.error('Failed to append edit request comment:', saveErr);
+    }
+
+    res.json({ message: 'Edit request sent to executive' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -393,6 +446,14 @@ router.put('/:id/score', authenticate, authorize(['admin', 'superadmin']), async
     } catch (emailErr) {
       // Do not fail the response due to email issues
       console.error('Failed to send task score notification:', emailErr);
+    }
+
+    // Automatically update leaderboards (fire-and-forget)
+    try {
+      await updateLeaderboardsOnTaskScored(populated);
+    } catch (leaderboardErr) {
+      // Do not fail the response due to leaderboard update issues
+      console.error('Failed to update leaderboards:', leaderboardErr);
     }
 
     res.json(populated);

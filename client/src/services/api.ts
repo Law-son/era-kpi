@@ -61,6 +61,7 @@ export const tasksApi = {
   update: (id: string, data: any) => api.put(`/tasks/${id}`, data),
   submit: (id: string, data: any) => api.put(`/tasks/${id}/submit`, data),
   score: (id: string, data: any) => api.put(`/tasks/${id}/score`, data),
+  requestEdit: (id: string, data?: { message?: string }) => api.post(`/tasks/${id}/request-edit`, data || {}),
   delete: (id: string) => api.delete(`/tasks/${id}`),
 };
 

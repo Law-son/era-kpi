@@ -138,6 +138,135 @@ export const calculateUserPerformance = async (userId, year, month) => {
   }
 };
 
+// Update leaderboard for a specific company and period (monthly or yearly)
+const updateLeaderboardForCompany = async (companyId, type, year, month = null) => {
+  try {
+    console.log(`[LEADERBOARD] Updating ${type} leaderboard for company ${companyId}, ${year}${month ? `-${month}` : ''}`);
+    
+    // Get all executives in this company
+    const executives = await User.find({ 
+      company: companyId, 
+      role: 'executive',
+      isActive: true 
+    }).select('name email department');
+    
+    if (executives.length === 0) {
+      console.log(`[LEADERBOARD] No executives found in company ${companyId}`);
+      return;
+    }
+    
+    // Build date filter based on type
+    let dateFilter = {};
+    if (type === 'monthly') {
+      dateFilter = {
+        $gte: new Date(year, month - 1, 1),
+        $lte: new Date(year, month, 0, 23, 59, 59)
+      };
+    } else if (type === 'yearly') {
+      dateFilter = {
+        $gte: new Date(year, 0, 1),
+        $lte: new Date(year, 11, 31, 23, 59, 59)
+      };
+    }
+    
+    // Calculate performance for each executive
+    const leaderboardEntries = [];
+    
+    for (const exec of executives) {
+      // Get completed tasks with scoring for this executive
+      const tasks = await Task.find({
+        assignedTo: exec._id,
+        status: 'completed',
+        'scoring.totalScore': { $exists: true, $ne: null },
+        createdAt: dateFilter
+      });
+      
+      if (tasks.length > 0) {
+        const totalScore = tasks.reduce((sum, task) => sum + (task.scoring.totalScore || 0), 0);
+        const averageScore = totalScore / tasks.length;
+        
+        leaderboardEntries.push({
+          user: exec._id,
+          company: companyId,
+          totalScore: Math.round(totalScore * 10) / 10,
+          averageScore: Math.round(averageScore * 10) / 10,
+          tasksCompleted: tasks.length,
+          badges: [],
+          performanceLevel: averageScore >= 8 ? 'excellent' : averageScore >= 6 ? 'satisfactory' : 'underperforming'
+        });
+      }
+    }
+    
+    // Sort by total score (descending)
+    leaderboardEntries.sort((a, b) => b.totalScore - a.totalScore);
+    
+    // Add ranks
+    leaderboardEntries.forEach((entry, index) => {
+      entry.rank = index + 1;
+    });
+    
+    // Check if leaderboard already exists
+    const existingLeaderboard = await Leaderboard.findOne({
+      company: companyId,
+      type: type,
+      'period.year': year,
+      ...(type === 'monthly' && { 'period.month': month })
+    });
+    
+    if (existingLeaderboard) {
+      // Update existing leaderboard
+      existingLeaderboard.entries = leaderboardEntries;
+      await existingLeaderboard.save();
+      console.log(`[LEADERBOARD] Updated ${type} leaderboard for company ${companyId}`);
+    } else {
+      // Create new leaderboard
+      const newLeaderboard = new Leaderboard({
+        company: companyId,
+        type: type,
+        period: {
+          year: year,
+          ...(type === 'monthly' && { month: month })
+        },
+        entries: leaderboardEntries
+      });
+      
+      await newLeaderboard.save();
+      console.log(`[LEADERBOARD] Created ${type} leaderboard for company ${companyId} with ${leaderboardEntries.length} entries`);
+    }
+  } catch (error) {
+    console.error(`[LEADERBOARD] Error updating ${type} leaderboard:`, error);
+    // Don't throw - we don't want leaderboard update failures to break task scoring
+  }
+};
+
+// Automatically update leaderboards when a task is scored
+export const updateLeaderboardsOnTaskScored = async (task) => {
+  try {
+    if (!task || !task.company || !task.createdAt) {
+      console.log('[LEADERBOARD] Task missing required fields for leaderboard update');
+      return;
+    }
+    
+    const companyId = task.company._id || task.company;
+    const taskDate = new Date(task.createdAt);
+    const year = taskDate.getFullYear();
+    const month = taskDate.getMonth() + 1;
+    
+    console.log(`[LEADERBOARD] Auto-updating leaderboards for task scored in ${year}-${month}, company ${companyId}`);
+    
+    // Update monthly leaderboard
+    await updateLeaderboardForCompany(companyId, 'monthly', year, month);
+    
+    // Update yearly leaderboard
+    await updateLeaderboardForCompany(companyId, 'yearly', year);
+    
+    console.log(`[LEADERBOARD] Successfully auto-updated leaderboards for company ${companyId}`);
+  } catch (error) {
+    console.error('[LEADERBOARD] Error in auto-update leaderboards:', error);
+    // Don't throw - we don't want leaderboard update failures to break task scoring
+  }
+};
+
 export const updateLeaderboard = async (companyId, period, year, month) => {
   try {
     // This would update an existing leaderboard with new data

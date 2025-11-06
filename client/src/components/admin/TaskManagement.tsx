@@ -49,6 +49,7 @@ const TaskManagement: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [activeTab, setActiveTab] = useState<'pending' | 'completed' | 'other'>('pending');
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -176,6 +177,18 @@ const TaskManagement: React.FC = () => {
     }
   };
 
+  const requestEdit = async (task: Task) => {
+    try {
+      const note = window.prompt('Add a note for the executive (optional):', '');
+      await tasksApi.requestEdit(task._id, note ? { message: note } : undefined);
+      toast.success('Edit request sent to executive');
+      // Add a light refresh to reflect comment addition
+      fetchTasks();
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to send edit request');
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed': return 'bg-green-100 text-green-800 border-green-200';
@@ -205,6 +218,8 @@ const TaskManagement: React.FC = () => {
 
   const pendingTasks = tasks.filter(task => task.status === 'submitted' && !task.scoring);
   const completedTasks = tasks.filter(task => task.status === 'completed' && task.scoring);
+  const otherTasks = tasks.filter(task => !pendingTasks.includes(task) && !completedTasks.includes(task));
+  const visibleTasks = activeTab === 'pending' ? pendingTasks : activeTab === 'completed' ? completedTasks : otherTasks;
 
   return (
     <div className="space-y-6">
@@ -252,7 +267,42 @@ const TaskManagement: React.FC = () => {
         </div>
       )}
 
-      
+      {/* Tabs: Pending vs Completed */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab('pending')}
+          className={`px-4 py-2 rounded-lg border transition-colors ${
+            activeTab === 'pending'
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+          }`}
+        >
+          Pending ({pendingTasks.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('completed')}
+          className={`px-4 py-2 rounded-lg border transition-colors ${
+            activeTab === 'completed'
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+          }`}
+        >
+          Completed ({completedTasks.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('other')}
+          className={`px-4 py-2 rounded-lg border transition-colors ${
+            activeTab === 'other'
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+          }`}
+        >
+          Other ({otherTasks.length})
+        </button>
+      </div>
 
       {showForm && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -376,7 +426,7 @@ const TaskManagement: React.FC = () => {
       )}
 
       <div className="space-y-4">
-        {tasks.map((task) => {
+        {visibleTasks.map((task) => {
           return (
           <div key={task._id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex items-start justify-between">
@@ -451,7 +501,7 @@ const TaskManagement: React.FC = () => {
                   </div>
                 )}
 
-                {task.status === 'submitted' && !task.scoring && (
+                {activeTab === 'pending' && task.status === 'submitted' && !task.scoring && (
                   <div className="mt-4 p-6 border-2 border-orange-200 bg-orange-50 rounded-lg shadow-lg">
                     <div className="flex items-center space-x-2 mb-4">
                       <div className="w-3 h-3 bg-orange-500 rounded-full animate-pulse"></div>
@@ -614,6 +664,14 @@ const TaskManagement: React.FC = () => {
               </div>
               
               <div className="flex space-x-2 ml-4">
+                {task.status !== 'completed' && (
+                  <button
+                    onClick={() => requestEdit(task)}
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                  >
+                    Request Edit
+                  </button>
+                )}
                 <button
                   onClick={() => handleEdit(task)}
                   className="text-gray-400 hover:text-gray-600"
@@ -633,11 +691,17 @@ const TaskManagement: React.FC = () => {
         })}
       </div>
 
-      {tasks.length === 0 && (
+      {visibleTasks.length === 0 && (
         <div className="text-center py-12">
           <CheckSquare className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No tasks found</h3>
-          <p className="text-gray-500">Create your first task to get started.</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No {activeTab === 'pending' ? 'pending' : activeTab === 'completed' ? 'completed' : 'other'} tasks</h3>
+          <p className="text-gray-500">{
+            activeTab === 'pending'
+              ? 'Tasks awaiting review will appear here.'
+              : activeTab === 'completed'
+                ? 'Completed and scored tasks will appear here.'
+                : 'Tasks that are in-progress, overdue, or otherwise uncategorized will appear here.'
+          }</p>
         </div>
       )}
     </div>
