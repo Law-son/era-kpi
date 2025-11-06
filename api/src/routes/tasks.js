@@ -316,11 +316,6 @@ router.post('/:id/request-edit', authenticate, authorize(['admin', 'superadmin']
     const task = await Task.findById(req.params.id).populate('assignedTo', 'name email').populate('company', 'name');
     if (!task) return res.status(404).json({ message: 'Task not found' });
 
-    // Only allow request edit for non-completed tasks
-    if (task.status === 'completed') {
-      return res.status(400).json({ message: 'Cannot request edit for a completed task' });
-    }
-
     // Notify executive via email
     try {
       const executive = task.assignedTo;
@@ -367,9 +362,14 @@ router.put('/:id/score', authenticate, authorize(['admin', 'superadmin']), async
     const task = await Task.findById(req.params.id);
     if (!task) return res.status(404).json({ message: 'Task not found' });
 
+    // Allow scoring for submitted tasks or regrading completed tasks
     if (task.status !== 'submitted' && task.status !== 'completed') {
       return res.status(400).json({ message: 'Task must be submitted before scoring' });
     }
+
+    // Detect if this is a regrade and save previous score for notification
+    const isRegrade = task.status === 'completed' && task.scoring && task.scoring.totalScore !== undefined;
+    const previousScore = isRegrade ? task.scoring.totalScore : null;
 
     // Validate score ranges
     if (qualityScore !== undefined && (qualityScore < 0 || qualityScore > 10)) {
@@ -411,25 +411,34 @@ router.put('/:id/score', authenticate, authorize(['admin', 'superadmin']), async
       .populate('company', 'name')
       .populate('comments.author', 'name role');
 
-    // Notify the executive about their task score (fire-and-forget)
+    // Notify the executive about their task score or regrade (fire-and-forget)
     try {
       const executive = populated.assignedTo;
       const company = populated.company;
       const admin = req.user;
       
       if (executive?.email) {
-        const subject = `[Task Scored] ${task.title} - Score: ${task.scoring.totalScore}/10`;
+        const subject = isRegrade 
+          ? `[Task Regraded] ${task.title} - Updated Score: ${task.scoring.totalScore}/10`
+          : `[Task Scored] ${task.title} - Score: ${task.scoring.totalScore}/10`;
+        
+        const previousScoreText = isRegrade && previousScore !== null 
+          ? `\nPrevious Score: ${previousScore}/10\n` 
+          : '';
+        
         const message = `Hello ${executive.name},\n\n` +
-          `Your task has been reviewed and scored by ${admin.name}:\n\n` +
+          `${isRegrade ? 'Your task has been regraded' : 'Your task has been reviewed and scored'} by ${admin.name}:\n\n` +
           `Task: ${task.title}\n` +
           `Company: ${company.name}\n` +
-          `Final Score: ${task.scoring.totalScore}/10\n\n` +
-          `Score Breakdown:\n` +
+          `${isRegrade ? 'Updated ' : ''}Final Score: ${task.scoring.totalScore}/10\n` +
+          previousScoreText +
+          `\nScore Breakdown:\n` +
           `• Quality Score: ${task.scoring.qualityScore}/10\n` +
           `• Time Score: ${task.scoring.timeScore}/10\n` +
           `• Initiative Score: ${task.scoring.initiativeScore}/10\n\n` +
           `Feedback: ${task.scoring.feedback || 'No specific feedback provided'}\n\n` +
-          `Please log in to view your performance dashboard and see how this affects your overall ranking.\n\n` +
+          `${isRegrade ? 'Please note that this regrade may affect your overall ranking and performance metrics.\n\n' : ''}` +
+          `Please log in to view your performance dashboard and see how this ${isRegrade ? 'regrade' : 'score'} affects your overall ranking.\n\n` +
           `Best regards,\n${admin.name}`;
         
         await sendAdminAddedEmail({ 
@@ -437,9 +446,9 @@ router.put('/:id/score', authenticate, authorize(['admin', 'superadmin']), async
           toName: executive.name, 
           subject, 
           message 
-        }).catch(err => console.error(`Failed to send score notification to executive ${executive.email}:`, err));
+        }).catch(err => console.error(`Failed to send ${isRegrade ? 'regrade' : 'score'} notification to executive ${executive.email}:`, err));
         
-        console.log(`Sent task score notification to executive ${executive.name} for task: ${task.title}`);
+        console.log(`Sent task ${isRegrade ? 'regrade' : 'score'} notification to executive ${executive.name} for task: ${task.title}`);
       } else {
         console.log(`No valid executive email found for task: ${task.title} (assignedTo: ${task.assignedTo})`);
       }

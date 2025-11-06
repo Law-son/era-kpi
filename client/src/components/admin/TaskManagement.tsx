@@ -59,6 +59,7 @@ const TaskManagement: React.FC = () => {
     reportLink: '',
   });
   const [grading, setGrading] = useState<Record<string, { quality: number; initiative: number; feedback: string; comment: string }>>({});
+  const [regrading, setRegrading] = useState<Record<string, boolean>>({});
   const { user } = useAuth();
 
   useEffect(() => {
@@ -151,6 +152,32 @@ const TaskManagement: React.FC = () => {
     }
   };
 
+  const startRegrade = (task: Task) => {
+    setRegrading((prev) => ({ ...prev, [task._id]: true }));
+    setGrading((prev) => ({
+      ...prev,
+      [task._id]: {
+        quality: task.scoring?.qualityScore || 0,
+        initiative: task.scoring?.initiativeScore || 0,
+        feedback: task.scoring?.feedback || '',
+        comment: '',
+      },
+    }));
+  };
+
+  const cancelRegrade = (taskId: string) => {
+    setRegrading((prev) => {
+      const newState = { ...prev };
+      delete newState[taskId];
+      return newState;
+    });
+    setGrading((prev) => {
+      const newState = { ...prev };
+      delete newState[taskId];
+      return newState;
+    });
+  };
+
   const gradeAndScore = async (task: Task) => {
     const entry = grading[task._id];
     if (!entry) {
@@ -162,6 +189,7 @@ const TaskManagement: React.FC = () => {
       toast.error('Quality, initiative, and feedback are required');
       return;
     }
+    const isRegrade = !!task.scoring && task.status === 'completed';
     try {
       await tasksApi.score(task._id, {
         qualityScore: Number(quality),
@@ -169,8 +197,17 @@ const TaskManagement: React.FC = () => {
         feedback,
         comment,
       });
-      toast.success('Task scored successfully');
-      setGrading((prev) => ({ ...prev, [task._id]: { quality: 0, initiative: 0, feedback: '', comment: '' } }));
+      toast.success(isRegrade ? 'Task regraded successfully' : 'Task scored successfully');
+      setGrading((prev) => {
+        const newState = { ...prev };
+        delete newState[task._id];
+        return newState;
+      });
+      setRegrading((prev) => {
+        const newState = { ...prev };
+        delete newState[task._id];
+        return newState;
+      });
       fetchTasks();
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to score task');
@@ -471,9 +508,19 @@ const TaskManagement: React.FC = () => {
                   </div>
                 )}
 
-                {task.scoring && (
+                {task.scoring && !regrading[task._id] && (
                   <div className="mt-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                    <h4 className="font-medium text-gray-900 mb-3">Performance Score</h4>
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-medium text-gray-900">Performance Score</h4>
+                      {task.status === 'completed' && (
+                        <button
+                          onClick={() => startRegrade(task)}
+                          className="px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
+                        >
+                          Regrade
+                        </button>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                       <div className="text-center p-2 bg-white rounded border">
                         <div className="text-gray-500">Quality</div>
@@ -498,6 +545,160 @@ const TaskManagement: React.FC = () => {
                         <p className="text-sm text-gray-600 mt-1 p-2 bg-white rounded border">{task.scoring.feedback}</p>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {regrading[task._id] && task.status === 'completed' && (
+                  <div className="mt-4 p-6 border-2 border-purple-200 bg-purple-50 rounded-lg shadow-lg">
+                    <div className="flex items-center space-x-2 mb-4">
+                      <div className="w-3 h-3 bg-purple-500 rounded-full animate-pulse"></div>
+                      <h4 className="font-semibold text-gray-900 text-lg">🔄 Regrading Task</h4>
+                      <span className="px-3 py-1 bg-purple-200 text-purple-800 text-sm font-medium rounded-full">Regrade in Progress</span>
+                    </div>
+                    <div className="mb-4 p-3 bg-white rounded-lg border border-purple-200">
+                      <p className="text-sm text-gray-700">
+                        <strong>Regrading task for {task.assignedTo.name}</strong> - Please update the scores and provide new feedback.
+                      </p>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Quality Score (0-10)
+                            <span className="text-gray-500 ml-1">- Work quality and accuracy</span>
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={10}
+                            step={0.1}
+                            value={grading[task._id]?.quality ?? ''}
+                            onChange={(e) => {
+                              const value = Number(e.target.value);
+                              if (value >= 0 && value <= 10) {
+                                setGrading({
+                                  ...grading,
+                                  [task._id]: {
+                                    quality: value,
+                                    initiative: grading[task._id]?.initiative ?? 0,
+                                    feedback: grading[task._id]?.feedback ?? '',
+                                    comment: grading[task._id]?.comment ?? '',
+                                  },
+                                });
+                              } else if (e.target.value !== '') {
+                                toast.error('Quality score must be between 0 and 10');
+                              }
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                            placeholder="8.5"
+                          />
+                        </div>
+                        
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Initiative Score (0-10)
+                            <span className="text-gray-500 ml-1">- Proactivity and innovation</span>
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={10}
+                            step={0.1}
+                            value={grading[task._id]?.initiative ?? ''}
+                            onChange={(e) => {
+                              const value = Number(e.target.value);
+                              if (value >= 0 && value <= 10) {
+                                setGrading({
+                                  ...grading,
+                                  [task._id]: {
+                                    quality: grading[task._id]?.quality ?? 0,
+                                    initiative: value,
+                                    feedback: grading[task._id]?.feedback ?? '',
+                                    comment: grading[task._id]?.comment ?? '',
+                                  },
+                                });
+                              } else if (e.target.value !== '') {
+                                toast.error('Initiative score must be between 0 and 10');
+                              }
+                            }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                            placeholder="7.0"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Detailed Feedback
+                            <span className="text-gray-500 ml-1">- Specific performance feedback</span>
+                          </label>
+                          <textarea
+                            rows={4}
+                            value={grading[task._id]?.feedback ?? ''}
+                            onChange={(e) => setGrading({
+                              ...grading,
+                              [task._id]: {
+                                quality: grading[task._id]?.quality ?? 0,
+                                initiative: grading[task._id]?.initiative ?? 0,
+                                feedback: e.target.value,
+                                comment: grading[task._id]?.comment ?? '',
+                              },
+                            })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                            placeholder="Provide specific feedback on the task completion..."
+                          />
+                        </div>
+                        
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Additional Comments
+                            <span className="text-gray-500 ml-1">- Broader project insights</span>
+                          </label>
+                          <textarea
+                            rows={3}
+                            value={grading[task._id]?.comment ?? ''}
+                            onChange={(e) => setGrading({
+                              ...grading,
+                              [task._id]: {
+                                quality: grading[task._id]?.quality ?? 0,
+                                initiative: grading[task._id]?.initiative ?? 0,
+                                feedback: grading[task._id]?.feedback ?? '',
+                                comment: e.target.value,
+                              },
+                            })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                            placeholder="Add any broader-scope remarks or insights..."
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-6 flex items-center justify-between p-4 bg-white rounded-lg border">
+                      <div className="text-sm text-gray-600">
+                        <div>Time Score will be calculated automatically based on submission timing</div>
+                        <div className="font-medium mt-1">Current Total: {
+                          (grading[task._id]?.quality || 0) * 0.4 + 
+                          (grading[task._id]?.initiative || 0) * 0.2 + 
+                          (task.submission ? (new Date(task.submission.submittedAt) <= new Date(task.deadline) ? 10 : 8) : 0) * 0.4
+                        }/10</div>
+                      </div>
+                      <div className="flex space-x-2">
+                        <button 
+                          className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
+                          onClick={() => gradeAndScore(task)}
+                        >
+                          Submit Regrade
+                        </button>
+                        <button 
+                          className="px-6 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors font-medium"
+                          onClick={() => cancelRegrade(task._id)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -664,14 +865,12 @@ const TaskManagement: React.FC = () => {
               </div>
               
               <div className="flex space-x-2 ml-4">
-                {task.status !== 'completed' && (
-                  <button
-                    onClick={() => requestEdit(task)}
-                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                  >
-                    Request Edit
-                  </button>
-                )}
+                <button
+                  onClick={() => requestEdit(task)}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                >
+                  Request Edit
+                </button>
                 <button
                   onClick={() => handleEdit(task)}
                   className="text-gray-400 hover:text-gray-600"
