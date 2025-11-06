@@ -24,6 +24,12 @@ interface Task {
     feedback: string;
   };
   reportLink?: string;
+  comments?: Array<{
+    author: { _id: string; name: string; role: string };
+    role: string;
+    text: string;
+    createdAt: string;
+  }>;
 }
 
 const MyTasks: React.FC = () => {
@@ -92,6 +98,35 @@ const MyTasks: React.FC = () => {
 
   const isOverdue = (deadline: string) => {
     return new Date(deadline) < new Date() && !['completed', 'submitted'].includes(tasks.find(t => t.deadline === deadline)?.status || '');
+  };
+
+  const hasActiveEditRequest = (task: Task): boolean => {
+    if (!task.comments || task.comments.length === 0) return false;
+    
+    // Check if there's an edit request comment from admin
+    const editRequestComments = task.comments.filter(comment => {
+      const isAdminComment = comment.author?.role === 'admin' || comment.role === 'admin';
+      const isEditRequest = comment.text && comment.text.toLowerCase().includes('edit requested');
+      
+      // If task was already submitted, check if edit request is after the last submission
+      if (task.submission && task.submission.submittedAt) {
+        return isAdminComment && isEditRequest && new Date(comment.createdAt) > new Date(task.submission.submittedAt);
+      }
+      return isAdminComment && isEditRequest;
+    });
+    
+    return editRequestComments.length > 0;
+  };
+
+  const canEditOrSubmit = (task: Task): boolean => {
+    // Completed tasks cannot be edited
+    if (task.status === 'completed') return false;
+    
+    // If deadline hasn't passed, allow editing/submission
+    if (new Date(task.deadline) >= new Date()) return true;
+    
+    // If deadline passed, only allow if there's an active edit request
+    return hasActiveEditRequest(task);
   };
 
   if (loading) {
@@ -215,8 +250,20 @@ const MyTasks: React.FC = () => {
                     </p>
                     {task.status !== 'completed' && (
                       <div className="mt-3">
-                        {editingSubmissionTaskId === task._id ? (
+                        {!canEditOrSubmit(task) && new Date(task.deadline) < new Date() ? (
+                          <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                            <p className="text-sm text-yellow-800">
+                              <strong>⚠️ Deadline Passed:</strong> This task cannot be edited after the deadline. 
+                              Please contact your admin to request an edit.
+                            </p>
+                          </div>
+                        ) : editingSubmissionTaskId === task._id ? (
                           <div className="space-y-3">
+                            {hasActiveEditRequest(task) && (
+                              <div className="p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                                ✓ Edit request received - You can now update your submission
+                              </div>
+                            )}
                             <textarea
                               value={submissionContent}
                               onChange={(e) => setSubmissionContent(e.target.value)}
@@ -243,7 +290,12 @@ const MyTasks: React.FC = () => {
                         ) : (
                           <button
                             onClick={() => { setEditingSubmissionTaskId(task._id); setSubmissionContent(task.submission?.content || ''); }}
-                            className="mt-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+                            disabled={!canEditOrSubmit(task)}
+                            className={`mt-2 px-3 py-1.5 rounded-lg transition-colors flex items-center space-x-2 ${
+                              canEditOrSubmit(task)
+                                ? 'bg-blue-600 text-white hover:bg-blue-700'
+                                : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                            }`}
                           >
                             <Pencil className="h-4 w-4" />
                             <span>Edit Submission</span>
@@ -255,8 +307,20 @@ const MyTasks: React.FC = () => {
                 ) : (
                   ['pending', 'in-progress'].includes(task.status) && (
                     <div className="mt-3">
-                      {submittingTaskId === task._id ? (
+                      {!canEditOrSubmit(task) && new Date(task.deadline) < new Date() ? (
+                        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                          <p className="text-sm text-yellow-800">
+                            <strong>⚠️ Deadline Passed:</strong> This task cannot be submitted after the deadline. 
+                            Please contact your admin to request an edit.
+                          </p>
+                        </div>
+                      ) : submittingTaskId === task._id ? (
                         <div className="space-y-3">
+                          {hasActiveEditRequest(task) && (
+                            <div className="p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                              ✓ Edit request received - You can now submit your task
+                            </div>
+                          )}
                           <textarea
                             value={submissionContent}
                             onChange={(e) => setSubmissionContent(e.target.value)}
@@ -286,7 +350,12 @@ const MyTasks: React.FC = () => {
                       ) : (
                         <button
                           onClick={() => setSubmittingTaskId(task._id)}
-                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+                          disabled={!canEditOrSubmit(task)}
+                          className={`px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 ${
+                            canEditOrSubmit(task)
+                              ? 'bg-blue-600 text-white hover:bg-blue-700'
+                              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          }`}
                         >
                           <FileText className="h-4 w-4" />
                           <span>Submit Task</span>

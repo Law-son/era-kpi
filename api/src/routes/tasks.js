@@ -199,11 +199,26 @@ router.put('/:id', authenticate, async (req, res) => {
       { new: true, runValidators: true, context: 'query' }
     ).populate('assignedTo', 'name email').populate('company', 'name');
 
-    // If reassigned, notify new executive
+    // Check if task was reassigned
+    const originalAssignee = original.assignedTo?.toString?.();
+    const newAssignee = (assignedTo || updated.assignedTo?._id || updated.assignedTo)?.toString?.();
+    const wasReassigned = newAssignee && originalAssignee !== newAssignee;
+
+    // Check if task details were updated (excluding status changes)
+    const titleChanged = original.title !== updated.title;
+    const descriptionChanged = original.description !== updated.description;
+    const deadlineChanged = original.deadline?.getTime() !== updated.deadline?.getTime();
+    const priorityChanged = original.priority !== updated.priority;
+    const reportLinkChanged = original.reportLink !== updated.reportLink;
+    
+    const detailsChanged = titleChanged || descriptionChanged || deadlineChanged || priorityChanged || reportLinkChanged;
+    const onlyDeadlineChanged = !titleChanged && !descriptionChanged && deadlineChanged && !priorityChanged && !reportLinkChanged;
+    const deadlineExtended = deadlineChanged && new Date(updated.deadline) > new Date(original.deadline);
+
+    // Notify executive if reassigned or if details changed
     try {
-      const originalAssignee = original.assignedTo?.toString?.();
-      const newAssignee = (assignedTo || updated.assignedTo?._id || updated.assignedTo)?.toString?.();
-      if (newAssignee && originalAssignee !== newAssignee) {
+      if (wasReassigned) {
+        // Notify new executive about assignment
         const exec = await User.findById(newAssignee).select('name email');
         if (exec?.email) {
           const subject = `[Task Assigned] ${updated.title}`;
@@ -216,9 +231,50 @@ router.put('/:id', authenticate, async (req, res) => {
             `Please log in to view details.` + (updated.reportLink ? `\n\nReport Link: ${updated.reportLink}` : '');
           sendAdminAddedEmail({ toEmail: exec.email, toName: exec.name, subject, message }).catch(() => {});
         }
+      } else if (detailsChanged && updated.assignedTo) {
+        // Notify existing executive about task update
+        const exec = updated.assignedTo;
+        if (exec?.email) {
+          let subject, message;
+          
+          if (onlyDeadlineChanged && deadlineExtended) {
+            // Deadline extension only
+            subject = `[Deadline Extended] ${updated.title}`;
+            message = `Hello ${exec.name},\n\n` +
+              `The deadline for your task has been extended:\n\n` +
+              `Task: ${updated.title}\n` +
+              `Previous Deadline: ${new Date(original.deadline).toLocaleString()}\n` +
+              `New Deadline: ${new Date(updated.deadline).toLocaleString()}\n\n` +
+              `You now have more time to complete this task. Please log in to view the updated deadline.\n\n` +
+              `Best regards,\n${req.user.name}`;
+          } else {
+            // General task update
+            subject = `[Task Updated] ${updated.title}`;
+            const changes = [];
+            if (titleChanged) changes.push(`Title: "${original.title}" → "${updated.title}"`);
+            if (descriptionChanged) changes.push('Description has been updated');
+            if (deadlineChanged) {
+              changes.push(`Deadline: ${new Date(original.deadline).toLocaleString()} → ${new Date(updated.deadline).toLocaleString()}`);
+            }
+            if (priorityChanged) changes.push(`Priority: ${original.priority} → ${updated.priority}`);
+            if (reportLinkChanged) changes.push('Report link has been updated');
+
+            message = `Hello ${exec.name},\n\n` +
+              `The task assigned to you has been updated:\n\n` +
+              `Task: ${updated.title}\n` +
+              `Priority: ${updated.priority}\n` +
+              `Deadline: ${new Date(updated.deadline).toLocaleString()}\n\n` +
+              `Changes made:\n${changes.map(c => `• ${c}`).join('\n')}\n\n` +
+              `Updated Description:\n${updated.description}\n\n` +
+              `Please log in to view the updated details.` + (updated.reportLink ? `\n\nReport Link: ${updated.reportLink}` : '');
+          }
+          
+          sendAdminAddedEmail({ toEmail: exec.email, toName: exec.name, subject, message }).catch(() => {});
+          console.log(`Sent task update notification to executive ${exec.name} for task: ${updated.title}`);
+        }
       }
     } catch (emailErr) {
-      console.error('Failed to send reassignment email:', emailErr);
+      console.error('Failed to send task update email:', emailErr);
     }
 
     res.json(updated);
@@ -230,10 +286,39 @@ router.put('/:id', authenticate, async (req, res) => {
 // Delete task
 router.delete('/:id', authenticate, authorize(['admin', 'superadmin']), async (req, res) => {
   try {
-    const task = await Task.findByIdAndDelete(req.params.id);
+    // Get task info before deletion to check if it was scored
+    const task = await Task.findById(req.params.id).populate('company', '_id');
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
+
+    // Check if task was scored (completed with scoring) - if so, we'll need to update leaderboards
+    const wasScored = task.status === 'completed' && task.scoring && task.scoring.totalScore !== undefined;
+    const companyId = task.company?._id || task.company;
+    const taskDate = task.createdAt ? new Date(task.createdAt) : new Date();
+    const year = taskDate.getFullYear();
+    const month = taskDate.getMonth() + 1;
+
+    // Delete the task
+    await Task.findByIdAndDelete(req.params.id);
+
+    // If task was scored, update leaderboards to reflect the deletion
+    // This ensures deleted tasks don't affect KPIs - they're removed from calculations
+    if (wasScored && companyId) {
+      try {
+        console.log(`[TASKS] Task was scored, updating leaderboards after deletion for company ${companyId}`);
+        await updateLeaderboardsOnTaskScored({ 
+          company: companyId, 
+          createdAt: taskDate,
+          _id: task._id 
+        });
+        console.log(`[TASKS] Leaderboards updated after task deletion`);
+      } catch (leaderboardErr) {
+        // Don't fail the deletion if leaderboard update fails
+        console.error('[TASKS] Failed to update leaderboards after task deletion:', leaderboardErr);
+      }
+    }
+
     res.json({ message: 'Task deleted successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -244,12 +329,33 @@ router.delete('/:id', authenticate, authorize(['admin', 'superadmin']), async (r
 router.put('/:id/submit', authenticate, authorize(['executive']), async (req, res) => {
   try {
     const { content } = req.body;
-    const task = await Task.findById(req.params.id);
+    const task = await Task.findById(req.params.id).populate('comments.author', 'role');
     if (!task) return res.status(404).json({ message: 'Task not found' });
 
     // Ensure the logged-in executive is the assignee
     if (task.assignedTo.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized to submit this task' });
+    }
+
+    // Check if deadline has passed
+    const deadlinePassed = new Date(task.deadline) < new Date();
+    
+    // Check if there's an active edit request (comment from admin with "Edit requested" text)
+    const hasActiveEditRequest = task.comments && task.comments.some(comment => {
+      const isAdminComment = comment.author?.role === 'admin' || comment.role === 'admin';
+      const isEditRequest = comment.text && comment.text.toLowerCase().includes('edit requested');
+      // Check if this edit request is after the last submission (if task was already submitted)
+      if (task.submission && task.submission.submittedAt) {
+        return isAdminComment && isEditRequest && new Date(comment.createdAt) > new Date(task.submission.submittedAt);
+      }
+      return isAdminComment && isEditRequest;
+    });
+
+    // If deadline passed and no active edit request, prevent submission
+    if (deadlinePassed && !hasActiveEditRequest) {
+      return res.status(403).json({ 
+        message: 'Cannot submit or edit task after deadline. Please request an edit from your admin first.' 
+      });
     }
 
     const isEdit = !!task.submission;
